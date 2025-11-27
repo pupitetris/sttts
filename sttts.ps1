@@ -87,6 +87,7 @@ Set-StrictMode -Version 3.0
 
 $MODEL_DIR = "$PSScriptRoot\models"
 $MODEL_DOWNLOAD_SCRIPT = "$MODEL_DIR\download-ggml-model.cmd"
+
 Set-Variable -Option ReadOnly -Name `
 MODEL_DIR,
 MODEL_DOWNLOAD_SCRIPT
@@ -106,7 +107,7 @@ if ($ListVoices) {
     $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
     if ($Lang -ne "" -and $Lang -ne "auto") {
 	(Get-Culture -ListAvailable |
-	Where-Object Name -Match ^$Lang |
+	Where-Object Name -match ^$Lang |
 	ForEach-Object { $synth.GetInstalledVoices($_) }
 	).VoiceInfo.Name -replace ' ', '_'
     }
