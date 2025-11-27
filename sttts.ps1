@@ -8,7 +8,7 @@ Param (
     [PSDefaultValue(Help="Vanilla whisper", Value="bin")]
     [ValidateSet("bin", "blas")]
     [Alias("b")]
-    [string]$BinPath = "bin",
+    [string]$BinPath = "whisper\bin",
 
     [Parameter(ParameterSetName="Speak", HelpMessage="Choose voice by gender")]
     [PSDefaultValue(Help="System's default voice synthethizer", Value="")]
@@ -81,13 +81,22 @@ Param (
     [switch]$Help
 )
 
+
 Set-StrictMode -Version 3.0
+
+
+$MODEL_DIR = "$PSScriptRoot\models"
+$MODEL_DOWNLOAD_SCRIPT = "$MODEL_DIR\download-ggml-model.cmd"
+Set-Variable -Option ReadOnly -Name `
+MODEL_DIR,
+MODEL_DOWNLOAD_SCRIPT
+
 
 if ($Help) {
     Get-Help $PSCommandPath
     Write-Host Parameters:    
     (Get-Command $PSCommandPath).ParameterSets.Parameters |
-    Where-Object { $_.HelpMessage } | Sort-Object -Property Name -Unique |
+    Where-Object HelpMessage | Sort-Object -Property Name -Unique |
     Format-Table -HideTableHeaders @{ Expression={"-$($_.Name)"} }, @{ Expression={"-$($_.Aliases[0])"} }, HelpMessage
     Exit
 }
@@ -109,14 +118,26 @@ if ($ListVoices) {
 }
     
 if ($ListModels) {
-    & $PSScriptRoot\model\download-ggml-model.cmd -l
+    & $MODEL_DOWNLOAD_SCRIPT -l
     Exit
 }
 
-$voice_name = $Voice -replace '_', ' '
-if ($voice_name -ne "") {
-    $synth.SelectVoice($voice_name)
+
+if (Split-Path -Path $BinPath -IsAbsolute) {
+    $whisper = $BinPath
 }
+else
+{
+    $whisper = "$PSScriptRoot\$BinPath"
+}
+$whisper += "\whisper-stream.exe"
+
+
+$voiceName = $Voice -replace '_', ' '
+if ($voiceName -ne "") {
+    $synth.SelectVoice($voiceName)
+}
+
 
 if ($Gender -ne "") {
     if ($Lang -ne "" -and $lang -ne "auto") {
@@ -128,10 +149,12 @@ if ($Gender -ne "") {
     }
 }
 
+
 if (-not $Clipboard) {
     Add-Type -AssemblyName System.Speech
     $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
 }
+
 
 filter Write-Debug-Or-Verbose () {
     if ($DebugPreference) {
@@ -143,14 +166,28 @@ filter Write-Debug-Or-Verbose () {
     }
 }
 
+
+filter Tee-Object-If-Debug () {
+    if ($DebugPreference) {
+	$_ | Tee-Object -Append $PSScriptRoot\debug_log.txt
+    }
+    else
+    {
+	$_
+    }
+}
+
+
 function Write-Report ([string]$field, [string]$value) {
     Write-Host -ForegroundColor DarkCyan -NoNewline "${field}: "
     Write-Host $value
 }
 
+
 function Write-Prompt () {
     Write-Host -ForegroundColor Cyan -NoNewline '> '
 }
+
 
 if (Test-Path variable:synth) {
     $synth.Rate = $Rate
@@ -163,30 +200,29 @@ if (Test-Path variable:synth) {
     Format-List -InputObject $synth.Voice | Out-String -Stream | Write-Debug-Or-Verbose
 }
 
-$last_text = ''
-$curr_lang = $Lang
 
-$model_dir = "$PSScriptRoot\model"
-$model_file = "$model_dir\ggml-$Model.bin"
+$modelFile = "$MODEL_DIR\ggml-$Model.bin"
 
-if (-not (Test-Path $model_file)) {
-    & $PSScriptRoot\model\download-ggml-model.cmd $Model $model_dir
+if (-not (Test-Path $modelFile)) {
+    & $MODEL_DOWNLOAD_SCRIPT $Model $MODEL_DIR
 }
 
+
+$lastText = ''
+$currLang = $Lang
 [console]::InputEncoding = [console]::OutputEncoding = New-Object System.Text.UTF8Encoding
-$args = '-ng', '-m', $model_file, '--step', '0', '--length', '5000', '-vth', $Vth, '-l', $Lang
-& $PSScriptRoot\$BinPath\whisper-stream.exe @args 2>&1 |
-Tee-Object -Append $PSScriptRoot\debug_log.txt | ForEach-Object {
+$args = '-ng', '-m', $modelFile, '--step', '0', '--length', '5000', '-vth', $Vth, '-l', $Lang
+& $whisper @args 2>&1 | Tee-Object-If-Debug | ForEach-Object {
     Write-Debug $_
     if ($_ -eq '[Start speaking]') {
 	Write-Prompt	
     }
     if ($_ -match '^whisper_full_with_state: auto-detected language: ([a-z]+)') {
-	$new_lang = $Matches[1]
-	if ($new_lang -ne $curr_lang) {
-	    $curr_lang = $new_lang
+	$newLang = $Matches[1]
+	if ($newLang -ne $currLang) {
+	    $currLang = $newLang
 	    if (Test-Path variable:synth) {
-		$synth.SelectVoiceByHints($synth.Voice.Gender, $synth.Voice.Age, 0, $new_lang)
+		$synth.SelectVoiceByHints($synth.Voice.Gender, $synth.Voice.Age, 0, $newLang)
 		Format-List -InputObject $synth.Voice | Out-String -Stream | Write-Debug-Or-Verbose
 	    }
 	}
@@ -204,7 +240,7 @@ Tee-Object -Append $PSScriptRoot\debug_log.txt | ForEach-Object {
 	if ([string]::IsNullOrWhiteSpace($text)) {
 	    return
 	}
-	if ($last_text -ne $text) {
+	if ($lastText -ne $text) {
 	    Write-Output $text	
 	    if (Test-Path variable:synth) {
 		$synth.Speak($text)
@@ -214,6 +250,6 @@ Tee-Object -Append $PSScriptRoot\debug_log.txt | ForEach-Object {
 	    }
 	    Write-Prompt	
 	}
-	$last_text = $text
+	$lastText = $text
     }
 }
