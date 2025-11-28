@@ -1,2 +1,5 @@
 /models/*.bin
 /debug_log.txt
+/whisper/*/
+/whisper/*.zip
+
