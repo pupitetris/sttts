@@ -82,6 +82,7 @@ Param (
 
 
 Set-StrictMode -Version 3.0
+$ErrorActionPreference = "stop"
 
 
 $MODEL_DIR = "$PSScriptRoot\models"
