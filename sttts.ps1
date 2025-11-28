@@ -5,8 +5,7 @@
 Param (
     [Parameter(ParameterSetName="Speak", HelpMessage="whisper-stream.exe location")]
     [Parameter(ParameterSetName="Clipboard", HelpMessage="whisper-stream.exe location")]
-    [PSDefaultValue(Help="Vanilla whisper", Value="bin")]
-    [ValidateSet("bin", "blas")]
+    [PSDefaultValue(Help="Vanilla whisper", Value="whisper\bin")]
     [Alias("b")]
     [string]$BinPath = "whisper\bin",
 
