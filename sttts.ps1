@@ -87,10 +87,87 @@ $ErrorActionPreference = "stop"
 
 $MODEL_DIR = "$PSScriptRoot\models"
 $MODEL_DOWNLOAD_SCRIPT = "$MODEL_DIR\download-ggml-model.cmd"
+$WHISPER_VERSION = "v1.8.2"
 
 Set-Variable -Option ReadOnly -Name `
 MODEL_DIR,
-MODEL_DOWNLOAD_SCRIPT
+MODEL_DOWNLOAD_SCRIPT,
+WHISPER_VERSION
+
+
+filter Write-Debug-Or-Verbose () {
+    if ($DebugPreference) {
+	$_ | Write-Debug
+    }
+    else
+    {
+	$_ | Write-Verbose
+    }
+}
+
+
+filter Tee-Object-If-Debug () {
+    if ($DebugPreference) {
+	$_ | Tee-Object -Append $PSScriptRoot\debug_log.txt
+    }
+    else
+    {
+	$_
+    }
+}
+
+
+function Write-Report ([string]$field, [string]$value) {
+    Write-Host -ForegroundColor DarkCyan -NoNewline "${field}: "
+    Write-Host $value
+}
+
+
+function Write-Prompt () {
+    Write-Host -ForegroundColor Cyan -NoNewline '> '
+}
+
+
+function Download ($splatHash) {
+    Write-Report "Downloading" $splatHash.Uri
+    Invoke-WebRequest @splatHash
+}
+
+
+function Install-Whisper ([string]$version, [string]$path) {
+    if (Test-Path $path) {
+	return
+    }
+
+    $base = Split-Path -Parent $path
+    # We dont install in custom locations
+    if ($base -ne "$PSScriptRoot\whisper") {
+	return
+    }
+
+    if (-not (Test-Path $base)) {
+	$Null = New-Item -ItemType Directory -Path $base
+    }
+
+    $flavour = Split-Path -Leaf $path
+    $zipBase = "$base\whisper-$version-$flavour-x64"
+    $zipFile = "$zipBase.zip"
+    if (-not (Test-Path "$base\$zipFile")) {
+	Download @{
+	    Uri = "https://github.com/ggml-org/whisper.cpp/releases/download/$version/whisper-$flavour-x64.zip"
+	    OutFile = $zipFile
+	}
+    }
+
+    Expand-Archive $zipFile -DestinationPath $zipBase
+    if (-not (Test-Path $path)) {
+	$Null = New-Item -ItemType Directory -Path $path
+    }
+    Copy-Item -Recurse -Force -Path "$zipBase\Release\*.dll" -Destination $path
+    Copy-Item -Recurse -Force -Path "$zipBase\Release\whisper-stream.exe" -Destination $path
+    Remove-Item -Recurse -Force -Path $zipBase
+    Remove-Item -Path $zipFile
+}
 
 
 if ($Help) {
@@ -125,13 +202,16 @@ if ($ListModels) {
 
 
 if (Split-Path -Path $BinPath -IsAbsolute) {
-    $whisper = $BinPath
+    $whisperPath = $BinPath
 }
 else
 {
-    $whisper = "$PSScriptRoot\$BinPath"
+    $whisperPath = "$PSScriptRoot\$BinPath"
+    if (-not (Test-Path $whisperPath)) {
+	Install-Whisper $WHISPER_VERSION $whisperPath
+    }
 }
-$whisper += "\whisper-stream.exe"
+$whisper = "$whisperPath\whisper-stream.exe"
 
 
 $voiceName = $Voice -replace '_', ' '
@@ -154,39 +234,6 @@ if ($Gender -ne "") {
 if (-not $Clipboard) {
     Add-Type -AssemblyName System.Speech
     $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
-}
-
-
-filter Write-Debug-Or-Verbose () {
-    if ($DebugPreference) {
-	$_ | Write-Debug
-    }
-    else 
-    {
-	$_ | Write-Verbose
-    }
-}
-
-
-filter Tee-Object-If-Debug () {
-    if ($DebugPreference) {
-	$_ | Tee-Object -Append $PSScriptRoot\debug_log.txt
-    }
-    else
-    {
-	$_
-    }
-}
-
-
-function Write-Report ([string]$field, [string]$value) {
-    Write-Host -ForegroundColor DarkCyan -NoNewline "${field}: "
-    Write-Host $value
-}
-
-
-function Write-Prompt () {
-    Write-Host -ForegroundColor Cyan -NoNewline '> '
 }
 
 
