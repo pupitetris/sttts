@@ -170,12 +170,31 @@ function Install-Whisper ([string]$version, [string]$path) {
 }
 
 
+function Get-ParameterInfo-Default-String ($paramInfo) {
+    $attr = $paramInfo.Attributes | Where-Object { $_.TypeId.Name -eq "PSDefaultValueAttribute" }
+    $res = ""
+    if ($attr) {
+	$res = "  Default:"
+	if ([string]$attr.Value -ne "") {
+	    $res += " $($attr.Value)"
+	}
+	if ($attr.Help) {
+	    $res += " ($($attr.Help))"
+	}
+    }
+    $res
+}
+
+
 if ($Help) {
     Get-Help $PSCommandPath
     Write-Host Parameters:    
     (Get-Command $PSCommandPath).ParameterSets.Parameters |
     Where-Object HelpMessage | Sort-Object -Property Name -Unique |
-    Format-Table -HideTableHeaders @{ Expression={"-$($_.Name)"} }, @{ Expression={"-$($_.Aliases[0])"} }, HelpMessage
+    Format-Table -HideTableHeaders @{ Expression={"-$($_.Name)"} },
+    @{ Expression={"-$($_.Aliases[0])"} },
+    HelpMessage,
+    @{ Expression={Get-ParameterInfo-Default-String($_)} }
     Exit
 }
 
