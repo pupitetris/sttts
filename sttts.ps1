@@ -298,12 +298,13 @@ $args = '-ng', '-m', $modelFile, '--step', '0', '--length', '5000', '-vth', $Vth
 	if (-not $DebugPreference) {
 	    Write-Verbose $_
 	}
-	$text = $_ -replace '^[^\]]*\] *', ''
-	$text = $text -replace '[\[\(\*](laughs|risas)[\)\]\*]', 'Ja ja ja'
-	$text = $text -replace '\[[^\]]*\] *', ''
-	$text = $text -replace '\([^\)]\) *', ''
-	$text = $text -replace '\*[^\*]\* *', ''
-	$text = $text -replace '\*+', ''
+	$text = $_ -replace 
+	'^[^\]]*\] *', '' -replace
+	'[\[\(\*](laughs|risas)[\)\]\*]', 'Ja ja ja' -replace
+	'\[[^\]]*\] *', '' -replace
+	'\([^\)]\) *', '' -replace
+	'\*[^\*]\* *', '' -replace
+	'\*+', ''
 	if ([string]::IsNullOrWhiteSpace($text)) {
 	    return
 	}
