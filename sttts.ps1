@@ -170,7 +170,7 @@ function Install-Whisper ([string]$version, [string]$path) {
 }
 
 
-function Get-ParameterInfo-Default-String ($paramInfo) {
+function Get-ParameterInfo-Default-Description ($paramInfo) {
     $attr = $paramInfo.Attributes | Where-Object { $_.TypeId.Name -eq "PSDefaultValueAttribute" }
     $res = ""
     if ($attr) {
@@ -194,7 +194,7 @@ if ($Help) {
     Format-Table -HideTableHeaders @{ Expression={"-$($_.Name)"} },
     @{ Expression={"-$($_.Aliases[0])"} },
     HelpMessage,
-    @{ Expression={Get-ParameterInfo-Default-String($_)} }
+    @{ Expression={Get-ParameterInfo-Default-Description($_)} }
     Exit
 }
 
