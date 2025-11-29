@@ -10,6 +10,11 @@ rem issued so the resulting errors can be examined.
 
 setlocal
 
+rem Add desired arguments to sttts.ps1 here:
+if not defined STTTS_ARGS (
+   set STTTS_ARGS=
+)
+
 set "script_dir=%~dp0"
 set "ESC=["
 
@@ -51,7 +56,7 @@ if %shell_is_pwsh% equ 1 (
 title STTTS
 
 rem "CALL" statement is a hack that avoids interrupt confirmation
-pwsh -NoProfile -ExecutionPolicy Bypass -Command %script_dir%sttts.ps1 %* || call if EnsureError
+pwsh -NoProfile -ExecutionPolicy Bypass -Command %script_dir%sttts.ps1 %STTTS_ARGS% %* || call if EnsureError
 set "err=%ERRORLEVEL%"
 goto :pause
 
