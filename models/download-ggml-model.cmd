@@ -2,6 +2,8 @@
 
 rem Based on whisper.cpp download script with minor modifications
 
+setlocal
+
 rem Save the original working directory
 set "orig_dir=%CD%"
 
