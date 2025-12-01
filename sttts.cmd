@@ -54,17 +54,14 @@ pwsh -Version | findstr "Powershell 7" >nul
 if %ERRORLEVEL% neq 0 goto :not_installed
 
 
+set "pwsh=pwsh -NoProfile -ExecutionPolicy Bypass"
+
+
 rem Window title setting
-if %shell_is_pwsh% equ 1 (
-   for /f "tokens=*" %%f in ("pwsh -Command [console]::Title") do (
+for /f "usebackq tokens=*" %%f in (
+       `%pwsh% -Command [console]::Title -replace ' - .*'^, ''`
+    ) do (
       set "saved_title=%%f"
-   )
-) else (
-   if defined WT_SESSION (
-      set "saved_title=Command Prompt"
-   ) else (
-      set "saved_title=%comspec%"
-   )
 )
 title STTTS
 
@@ -79,7 +76,7 @@ if not exist %script_dir%STTTS.lnk (
       echo $lnk.WorkingDirectory = '%script_dir%'
       echo $lnk.IconLocation = '%script_dir%res\sttts.ico,0'
       echo $lnk.Save(^^^)
-   ) | pwsh -NoProfile -ExecutionPolicy Bypass >nul
+   ) | %pwsh% >nul
 )
 
 
@@ -104,8 +101,7 @@ if %shell_is_interactive% neq 1 (
    pause
 )
 
-if not defined err set "err=%ERRORLEVEL%"
-if defined saved_title title %saved_title%
+title %saved_title%
 rem Reset text style before exiting:
 <nul set /p="%ESC%m"
 exit /b %err%
