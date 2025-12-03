@@ -65,6 +65,11 @@ Param (
     [Alias("m")]
     [string]$Model = "base-q5_1",
 
+    [Parameter(ParameterSetName="Speak", HelpMessage="Pass unrecognized/extra arguments to whisper-stream")]
+    [Parameter(ParameterSetName="Clipboard", HelpMessage="Pass unrecognized/extra arguments to whisper-stream")]
+    [Alias("w")]
+    [switch]$PassWhisperArgs,
+
     [Parameter(Mandatory, ParameterSetName="ListVoices", HelpMessage="List voice synthesizers available to the system and exit")]
     [switch]$ListVoices,
 
@@ -80,244 +85,310 @@ Param (
     [switch]$Help
 )
 
-
-Set-StrictMode -Version 3.0
-$ErrorActionPreference = "stop"
-
-
-$MODEL_DIR = "$PSScriptRoot\models"
-$MODEL_DOWNLOAD_SCRIPT = "$MODEL_DIR\download-ggml-model.cmd"
-$WHISPER_VERSION = "v1.8.2"
-
-Set-Variable -Option ReadOnly -Name `
-MODEL_DIR,
-MODEL_DOWNLOAD_SCRIPT,
-WHISPER_VERSION
-
-
-filter Write-Debug-Or-Verbose () {
-    if ($DebugPreference) {
-	$_ | Write-Debug
-    }
-    else
-    {
-	$_ | Write-Verbose
-    }
-}
-
-
-filter Tee-Object-If-Debug () {
-    if ($DebugPreference) {
-	$_ | Tee-Object -Append $PSScriptRoot\debug_log.txt
-    }
-    else
-    {
-	$_
-    }
-}
-
-
-function Write-Report ([string]$field, [string]$value) {
-    Write-Host -ForegroundColor DarkCyan -NoNewline "${field}: "
-    Write-Host $value
-}
-
-
-function Write-Prompt () {
-    Write-Host -ForegroundColor Cyan -NoNewline '> '
-}
-
-
-function Download ($splatHash) {
-    Write-Report "Downloading" $splatHash.Uri
-    Invoke-WebRequest @splatHash
-}
-
-
-function Install-Whisper ([string]$version, [string]$path) {
-    if (Test-Path $path) {
-	return
-    }
-
-    $base = Split-Path -Parent $path
-    # We dont install in custom locations
-    if ($base -ne "$PSScriptRoot\whisper") {
-	return
-    }
-
-    if (-not (Test-Path $base)) {
-	$Null = New-Item -ItemType Directory -Path $base
-    }
-
-    $flavour = Split-Path -Leaf $path
-    $zipBase = "$base\whisper-$version-$flavour-x64"
-    $zipFile = "$zipBase.zip"
-    if (-not (Test-Path "$base\$zipFile")) {
-	Download @{
-	    Uri = "https://github.com/ggml-org/whisper.cpp/releases/download/$version/whisper-$flavour-x64.zip"
-	    OutFile = $zipFile
-	}
-    }
-
-    Expand-Archive $zipFile -DestinationPath $zipBase
-    if (-not (Test-Path $path)) {
-	$Null = New-Item -ItemType Directory -Path $path
-    }
-    Copy-Item -Recurse -Force -Path "$zipBase\Release\*.dll" -Destination $path
-    Copy-Item -Recurse -Force -Path "$zipBase\Release\whisper-stream.exe" -Destination $path
-    Remove-Item -Recurse -Force -Path $zipBase
-    Remove-Item -Path $zipFile
-}
-
-
-function Get-ParameterInfo-Default-Description ($paramInfo) {
-    $attr = $paramInfo.Attributes | Where-Object { $_.TypeId.Name -eq "PSDefaultValueAttribute" }
-    $res = ""
-    if ($attr) {
-	$res = "  Default:"
-	if ([string]$attr.Value -ne "") {
-	    $res += " $($attr.Value)"
-	}
-	if ($attr.Help) {
-	    $res += " ($($attr.Help))"
-	}
-    }
-    $res
-}
-
-
-if ($Help) {
-    Get-Help $PSCommandPath
-    Write-Host Parameters:    
-    (Get-Command $PSCommandPath).ParameterSets.Parameters |
-    Where-Object HelpMessage | Sort-Object -Property Name -Unique |
-    Format-Table -HideTableHeaders @{ Expression={"-$($_.Name)"} },
-    @{ Expression={"-$($_.Aliases[0])"} },
-    HelpMessage,
-    @{ Expression={Get-ParameterInfo-Default-Description($_)} }
-    Exit
-}
-
-if ($ListVoices) {
-    Add-Type -AssemblyName System.Speech
-    $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
-    if ($Lang -ne "" -and $Lang -ne "auto") {
-	(Get-Culture -ListAvailable |
-	Where-Object Name -match ^$Lang |
-	ForEach-Object { $synth.GetInstalledVoices($_) }
-	).VoiceInfo.Name -replace ' ', '_'
-    }
-    else
-    {
-	$synth.GetInstalledVoices().VoiceInfo.Name -replace ' ', '_'
-    }
-    Exit
-}
-    
-if ($ListModels) {
-    & $MODEL_DOWNLOAD_SCRIPT -l
-    Exit
-}
-
-
-if (Split-Path -Path $BinPath -IsAbsolute) {
-    $whisperPath = $BinPath
-}
-else
-{
-    $whisperPath = "$PSScriptRoot\$BinPath"
-    if (-not (Test-Path $whisperPath)) {
-	Install-Whisper $WHISPER_VERSION $whisperPath
-    }
-}
-$whisper = "$whisperPath\whisper-stream.exe"
-
-
-$voiceName = $Voice -replace '_', ' '
-if ($voiceName -ne "") {
-    $synth.SelectVoice($voiceName)
-}
-
-
-if ($Gender -ne "") {
-    if ($Lang -ne "" -and $lang -ne "auto") {
-	$synth.SelectVoiceByHints($Gender, "adult", 0, $Lang)
-    }
-    else
-    {
-	$synth.SelectVoiceByHints($Gender)
-    }
-}
-
-
-if (-not $Clipboard) {
-    Add-Type -AssemblyName System.Speech
-    $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
-}
-
-
-if (Test-Path variable:synth) {
-    $synth.Rate = $Rate
-    $synth.Volume = $Volume
-
-    Write-Report "Voice" $synth.Voice.Name
-    Write-Report "Gender" $synth.Voice.Gender
-    Write-Report "Rate" $synth.Rate
-    Write-Report "Volume" $synth.Volume
-    Format-List -InputObject $synth.Voice | Out-String -Stream | Write-Debug-Or-Verbose
-}
-
-
-$modelFile = "$MODEL_DIR\ggml-$Model.bin"
-
-if (-not (Test-Path $modelFile)) {
-    & $MODEL_DOWNLOAD_SCRIPT $Model $MODEL_DIR
-}
-
-
-$lastText = ''
-$currLang = $Lang
-[console]::InputEncoding = [console]::OutputEncoding = New-Object System.Text.UTF8Encoding
-$args = '-ng', '-m', $modelFile, '--step', '0', '--length', '5000', '-vth', $Vth, '-l', $Lang
-& $whisper @args 2>&1 | Tee-Object-If-Debug | ForEach-Object {
-    Write-Debug $_
-    if ($_ -eq '[Start speaking]') {
-	Write-Prompt	
-    }
-    if ($_ -match '^whisper_full_with_state: auto-detected language: ([a-z]+)') {
-	$newLang = $Matches[1]
-	if ($newLang -ne $currLang) {
-	    $currLang = $newLang
-	    if (Test-Path variable:synth) {
-		$synth.SelectVoiceByHints($synth.Voice.Gender, $synth.Voice.Age, 0, $newLang)
-		Format-List -InputObject $synth.Voice | Out-String -Stream | Write-Debug-Or-Verbose
+dynamicparam {
+    if (Test-Path variable:PassWhisperArgs) {
+	if ($PassWhisperArgs) {
+	    $parameterAttribute1 = [System.Management.Automation.ParameterAttribute]@{
+		ParameterSetName = "Speak"
+		Mandatory = $false
+		DontShow = $true
+		ValueFromRemainingArguments = $true
+		HelpMessage = "Aditional arguments for whisper-stream"
 	    }
+	    $parameterAttribute2 = [System.Management.Automation.ParameterAttribute]@{
+		ParameterSetName = "Clipboard"
+		Mandatory = $false
+		DontShow = $true
+		ValueFromRemainingArguments = $true
+		HelpMessage = "Aditional arguments for whisper-stream"
+	    }
+	    $validationScript = [System.Management.Automation.ValidateScriptAttribute]::new(
+		{ $res = $_ | Foreach-Object { $_ -match "^[^-]" -or $_.Substring(1) -in "h","t","c","mt","ac","bas","vth","fth","tr","nf","ps","kc","l","m","f","tdrz","sa","ng","fa","nfa","-help","-threads","-step","-length","-keep","-capture","-max-tokens","-audio-ctx","-beam-size","-vad-thold","-freq-thold","-translate","-no-fallback","-print-special","-keep-context","-language","-model","-file","-tinydiarize","-save-audio","-no-gpu","-flash-attn","-no-flash-attn" }; -not ($False -in $res) }
+	    )
+	    $validationScript.ErrorMessage = "See whisper-stream usage with $PSCommandPath -w -- -h"
+
+	    $attributeCollection = [System.Collections.ObjectModel.Collection[System.Attribute]]::new()
+	    $attributeCollection.Add($parameterAttribute1)
+	    $attributeCollection.Add($parameterAttribute2)
+	    $attributeCollection.Add($validationScript)
+
+	    $dynParam1 = [System.Management.Automation.RuntimeDefinedParameter]::new(
+		'WhisperArgs', [string[]], $attributeCollection
+	    )
+
+	    $paramDictionary = [System.Management.Automation.RuntimeDefinedParameterDictionary]::new()
+	    $paramDictionary.Add('WhisperArgs', $dynParam1)
+	    return $paramDictionary
 	}
     }
-    if ($_ -match '^\[0') {
-	if (-not $DebugPreference) {
-	    Write-Verbose $_
+}
+
+end {
+    Set-StrictMode -Version 3.0
+    $ErrorActionPreference = "Stop"
+
+    $DEBUG_FILE = "$PSScriptRoot\debug_log.txt"
+    $MODEL_DIR = "$PSScriptRoot\models"
+    $MODEL_DOWNLOAD_SCRIPT = "$MODEL_DIR\download-ggml-model.cmd"
+    $WHISPER_VERSION = "v1.8.2"
+
+    Set-Variable -Option ReadOnly -Name `
+    DEBUG_FILE,
+    MODEL_DIR,
+    MODEL_DOWNLOAD_SCRIPT,
+    WHISPER_VERSION
+
+
+    filter Write-Debug-Or-Verbose () {
+	if ($DebugPreference) {
+	    $_ | Write-Debug
 	}
-	$text = $_ -replace 
-	'^[^\]]*\] *', '' -replace
-	'[\[\(\*](laughs|risas)[\)\]\*]', 'Ja ja ja' -replace
-	'\[[^\]]*\] *', '' -replace
-	'\([^\)]\) *', '' -replace
-	'\*[^\*]\* *', '' -replace
-	'\*+', ''
-	if ([string]::IsNullOrWhiteSpace($text)) {
+	else
+	{
+	    $_ | Write-Verbose
+	}
+    }
+
+
+    function Write-Report ([string]$field, [string]$value) {
+	Write-Host -ForegroundColor DarkCyan -NoNewline "${field}: "
+	Write-Host $value
+    }
+
+
+    function Write-Prompt () {
+	Write-Host -ForegroundColor Cyan -NoNewline '> '
+    }
+
+
+    function Download ($splatHash) {
+	Write-Report "Downloading" $splatHash.Uri
+	Invoke-WebRequest @splatHash
+    }
+
+
+    function Install-Whisper ([string]$version, [string]$path) {
+	if (Test-Path $path) {
 	    return
 	}
-	if ($lastText -ne $text) {
-	    Write-Output $text	
-	    if (Test-Path variable:synth) {
-		$synth.Speak($text)
-	    }
-	    if ($Clipboard) {
-		Set-Clipboard $text
-	    }
-	    Write-Prompt	
+
+	$base = Split-Path -Parent $path
+	# We dont install in custom locations
+	if ($base -ne "$PSScriptRoot\whisper") {
+	    return
 	}
-	$lastText = $text
+
+	if (-not (Test-Path $base)) {
+	    $Null = New-Item -ItemType Directory -Path $base
+	}
+
+	$flavour = Split-Path -Leaf $path
+	$zipBase = "$base\whisper-$version-$flavour-x64"
+	$zipFile = "$zipBase.zip"
+	if (-not (Test-Path "$base\$zipFile")) {
+	    Download @{
+		Uri = "https://github.com/ggml-org/whisper.cpp/releases/download/$version/whisper-$flavour-x64.zip"
+		OutFile = $zipFile
+	    }
+	}
+
+	Expand-Archive $zipFile -DestinationPath $zipBase
+	if (-not (Test-Path $path)) {
+	    $Null = New-Item -ItemType Directory -Path $path
+	}
+	Copy-Item -Recurse -Force -Path "$zipBase\Release\*.dll" -Destination $path
+	Copy-Item -Recurse -Force -Path "$zipBase\Release\whisper-stream.exe" -Destination $path
+	Remove-Item -Recurse -Force -Path $zipBase
+	Remove-Item -Path $zipFile
+    }
+
+
+    function Get-ParameterInfo-Default-Description ($paramInfo) {
+	$attr = $paramInfo.Attributes | Where-Object { $_.TypeId.Name -eq "PSDefaultValueAttribute" }
+	$res = ""
+	if ($attr) {
+	    $res = "  Default:"
+	    if ([string]$attr.Value -ne "") {
+		$res += " $($attr.Value)"
+	    }
+	    if ($attr.Help) {
+		$res += " ($($attr.Help))"
+	    }
+	}
+	$res
+    }
+
+
+    filter Tee-Object-If-Debug ($Path) {
+	if ($DebugPreference) {
+	    $_ | Tee-Object -Append $Path
+	}
+	else
+	{
+	    $_
+	}
+    }
+
+
+    function Call-Whisper ([string]$whisper) {
+	$oldEAP = $ErrorActionPreference
+	$ErrorActionPreference = "Continue"
+
+	try {
+	    & $whisper @Args 2>&1 | Tee-Object-If-Debug $DEBUG_FILE
+	    "Whisper exit code: $LASTEXITCODE" | Write-Debug-Or-Verbose
+	}
+	finally {
+	    $ErrorActionPreference = $oldEAP
+	}
+    }
+
+
+    if ($Help) {
+	Get-Help $PSCommandPath
+	Write-Host Parameters:
+	(Get-Command $PSCommandPath).ParameterSets.Parameters |
+	Where-Object HelpMessage | Sort-Object -Property Name -Unique |
+	Format-Table -HideTableHeaders @{ Expression={"-$($_.Name)"} },
+	@{ Expression={"-$($_.Aliases[0])"} },
+	HelpMessage,
+	@{ Expression={Get-ParameterInfo-Default-Description($_)} }
+	Exit
+    }
+
+    if ($ListVoices) {
+	Add-Type -AssemblyName System.Speech
+	$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
+	if ($Lang -ne "" -and $Lang -ne "auto") {
+	    (Get-Culture -ListAvailable |
+	    Where-Object Name -match ^$Lang |
+	    ForEach-Object { $synth.GetInstalledVoices($_) }
+	    ).VoiceInfo.Name -replace ' ', '_'
+	}
+	else
+	{
+	    $synth.GetInstalledVoices().VoiceInfo.Name -replace ' ', '_'
+	}
+	Exit
+    }
+
+    if ($ListModels) {
+	& $MODEL_DOWNLOAD_SCRIPT -l
+	Exit
+    }
+
+
+    if (Split-Path -Path $BinPath -IsAbsolute) {
+	$whisperPath = $BinPath
+    }
+    else
+    {
+	$whisperPath = "$PSScriptRoot\$BinPath"
+	if (-not (Test-Path $whisperPath)) {
+	    Install-Whisper $WHISPER_VERSION $whisperPath
+	}
+    }
+    $whisper = "$whisperPath\whisper-stream.exe"
+
+
+    $voiceName = $Voice -replace '_', ' '
+    if ($voiceName -ne "") {
+	$synth.SelectVoice($voiceName)
+    }
+
+
+    if ($Gender -ne "") {
+	if ($Lang -ne "" -and $lang -ne "auto") {
+	    $synth.SelectVoiceByHints($Gender, "adult", 0, $Lang)
+	}
+	else
+	{
+	    $synth.SelectVoiceByHints($Gender)
+	}
+    }
+
+
+    if (-not $Clipboard) {
+	Add-Type -AssemblyName System.Speech
+	$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
+    }
+
+
+    if (Test-Path variable:synth) {
+	$synth.Rate = $Rate
+	$synth.Volume = $Volume
+
+	Write-Report "Voice" $synth.Voice.Name
+	Write-Report "Gender" $synth.Voice.Gender
+	Write-Report "Rate" $synth.Rate
+	Write-Report "Volume" $synth.Volume
+	Format-List -InputObject $synth.Voice | Out-String -Stream | Write-Debug-Or-Verbose
+    }
+
+
+    $modelFile = "$MODEL_DIR\ggml-$Model.bin"
+
+    if (-not (Test-Path $modelFile)) {
+	& $MODEL_DOWNLOAD_SCRIPT $Model $MODEL_DIR
+    }
+
+
+    $lastText = ''
+    $currLang = $Lang
+    [console]::InputEncoding = [console]::OutputEncoding = New-Object System.Text.UTF8Encoding
+    $args = '-ng', '-m', $modelFile, '--step', '0', '--length', '5000', '-vth', $Vth, '-l', $Lang
+
+    $WhisperArgs = @()
+    if ($PSBoundParameters.ContainsKey('WhisperArgs')) {
+	$WhisperArgs = $PSBoundParameters['WhisperArgs']
+    }
+    Write-Debug "Executing: $whisper $args $WhisperArgs"
+    if ("-h" -in $WhisperArgs) {
+	& $whisper @args @WhisperArgs
+	Exit
+    }
+
+    Call-Whisper $whisper @args @WhisperArgs |
+    ForEach-Object {
+	Write-Debug $_
+	if ($_ -eq '[Start speaking]') {
+	    Write-Prompt
+	}
+	if ($_ -match '^whisper_full_with_state: auto-detected language: ([a-z]+)') {
+	    $newLang = $Matches[1]
+	    if ($newLang -ne $currLang) {
+		$currLang = $newLang
+		if (Test-Path variable:synth) {
+		    $synth.SelectVoiceByHints($synth.Voice.Gender, $synth.Voice.Age, 0, $newLang)
+		    Format-List -InputObject $synth.Voice | Out-String -Stream | Write-Debug-Or-Verbose
+		}
+	    }
+	}
+	if ($_ -match '^\[0') {
+	    if (-not $DebugPreference) {
+		Write-Verbose $_
+	    }
+	    $text = $_ -replace
+	    '^[^\]]*\] *', '' -replace
+	    '[\[\(\*](laughs|risas)[\)\]\*]', 'Ja ja ja' -replace
+	    '\[[^\]]*\] *', '' -replace
+	    '\([^\)]\) *', '' -replace
+	    '\*[^\*]\* *', '' -replace
+	    '\*+', ''
+	    if ([string]::IsNullOrWhiteSpace($text)) {
+		return
+	    }
+	    if ($lastText -ne $text) {
+		Write-Output $text
+		if (Test-Path variable:synth) {
+		    $synth.Speak($text)
+		}
+		if ($Clipboard) {
+		    Set-Clipboard $text
+		}
+		Write-Prompt
+	    }
+	    $lastText = $text
+	}
     }
 }
